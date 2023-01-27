@@ -125,6 +125,9 @@ uint32_t countRxError2 = 0;
 uint32_t countRxError3 = 0;
 uint32_t canRestartCounter = 0;
 
+uint8_t txcplt;
+uint8_t rxcplt;
+uint8_t txrxcplt;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -356,27 +359,8 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    
     /* USER CODE END WHILE */
-    HAL_GPIO_WritePin(CS_KneeABS_GPIO_Port, CS_KneeABS_Pin, GPIO_PIN_RESET);
-    HAL_SPI_Transmit(&hspi2, abs_read_addr, 2, 100);
-    HAL_GPIO_WritePin(CS_KneeABS_GPIO_Port, CS_KneeABS_Pin, GPIO_PIN_SET);
-
-
-    HAL_GPIO_WritePin(CS_KneeABS_GPIO_Port, CS_KneeABS_Pin, GPIO_PIN_RESET);
-    HAL_SPI_Receive(&hspi2, kneeAbs.RxDataBuff, 2, 100);
-    HAL_GPIO_WritePin(CS_KneeABS_GPIO_Port, CS_KneeABS_Pin, GPIO_PIN_SET);
-
-    kneeAbs.errorFlag = (kneeAbs.RxDataBuff[0] >> 6) & 1U;
-    kneeAbs.kneeOutputCountTemp = (uint16_t)( kneeAbs.RxDataBuff[0] << 8 | kneeAbs.RxDataBuff[1]);
-    kneeAbs.parity = isEvenParity(kneeAbs.kneeOutputCountTemp);
-    if(!kneeAbs.errorFlag && isEvenParity(kneeAbs.kneeOutputCountTemp)){
-      kneeAbs.kneeOutputCount =  kneeAbs.kneeOutputCountTemp & 0x3FFF;
-    }else{
-      errorCount++;
-    }
-
-
-    HAL_Delay(2);
 
     /* USER CODE BEGIN 3 */
   }
@@ -468,6 +452,10 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
     incENCODER.u16counter_ABI[1] = incENCODER.u16counter_ABI[0];
     incENCODER.s32counter_ABI += incENCODER.direction * incENCODER.encDelta_ABI;
 
+    // absolute encoder
+    HAL_GPIO_WritePin(CS_KneeABS_GPIO_Port, CS_KneeABS_Pin, GPIO_PIN_RESET);
+    HAL_SPI_Transmit_IT(&hspi2, abs_read_addr, 2);
+
     // sending uart
     //TMC_torque_command = 1000 is 1 A (current).
     TMC_torque_command = Current_U;
@@ -475,6 +463,33 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
     HAL_UART_Transmit_IT(&huart3, vesc_tx_buff, vesc_bufflength);
   }
 }
+
+void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+  if(hspi->Instance == SPI2){
+    HAL_GPIO_WritePin(CS_KneeABS_GPIO_Port, CS_KneeABS_Pin, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(CS_KneeABS_GPIO_Port, CS_KneeABS_Pin, GPIO_PIN_RESET);
+    HAL_SPI_Receive_IT(&hspi2, kneeAbs.RxDataBuff, 2);
+  }
+}
+void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+  if(hspi->Instance == SPI2){
+    HAL_GPIO_WritePin(CS_KneeABS_GPIO_Port, CS_KneeABS_Pin, GPIO_PIN_SET);
+
+    // process the received data
+    kneeAbs.errorFlag = (kneeAbs.RxDataBuff[0] >> 6) & 1U;
+    kneeAbs.kneeOutputCountTemp = (uint16_t)( kneeAbs.RxDataBuff[0] << 8 | kneeAbs.RxDataBuff[1]);
+    kneeAbs.parity = isEvenParity(kneeAbs.kneeOutputCountTemp);
+    if(!kneeAbs.errorFlag && isEvenParity(kneeAbs.kneeOutputCountTemp)){
+      kneeAbs.kneeOutputCount =  kneeAbs.kneeOutputCountTemp & 0x3FFF;
+    }else{
+      errorCount++;
+    }
+
+  }
+}
+
 
 /* USER CODE END 4 */
 
