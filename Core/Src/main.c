@@ -27,6 +27,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "UNVScontroller_V3.h"
 #include "PVESC_UART.h"
 #include "checksum.h"
 /* USER CODE END Includes */
@@ -42,7 +43,7 @@ typedef struct {
 typedef struct {
   uint8_t TxCommand;
   uint8_t errorFlag;
-  uint8_t RxDataBuff[2];
+  volatile uint8_t RxDataBuff[2];
   uint8_t parity;
   uint16_t kneeOutputCountTemp;
   uint16_t kneeOutputCount; //(0-16383) 14bit quantization levels
@@ -77,6 +78,16 @@ incENCODER = {.direction = -1};
 #define DRIVE2_RIGHT_ID 2
 #define DRIVE3_RIGHT_ID 3
 
+#ifndef PI
+  #define PI   3.14159265358979323846264338327950 
+#endif
+
+
+#define RadToDeg(X) (X * (180.0 / PI))
+#define DegToRad(X) (X * (PI / 180.0))
+#define CntToDeg(X) (X * (360.0/2000.0))
+#define DegToCnt(X) (X * (2000.0/360.0))
+
 /* SPI commands */
 
 // #define AMT22_RESET     0x60
@@ -93,6 +104,25 @@ incENCODER = {.direction = -1};
 /* USER CODE BEGIN PV */
 DriveFeedback fb; // for now: fb[0] is DRIVE0_RIGHT_ID
 
+/**BEGIN>> Controller vialable <<**/
+// CONTROLLER
+CTRL_TypeDef knee_left;
+uint8_t controller_is_enable = 0;
+float pos_setpoint, pos_feedback;
+float vel_setpoint, vel_feedback;
+float cur_setpoint, cur_feedback;
+
+float pos_feedback_knee_L = 0;
+float vel_feedback_knee_L = 0;
+
+float Current_U = 0;
+
+// user input to controller
+volatile float userPos, userVel; // Position is in degree (0-360), Velocity is in Deg/Second.
+float u; // current value for debug
+float posError;
+/**END>> Controller vialable <<**/
+
 // absolute encoder variable
 AEAT9922 kneeAbs;
 uint8_t abs_read_addr[2] = {0xC0, 0x3F};
@@ -102,14 +132,15 @@ uint8_t crcresult;
 
 uint32_t errorCount;
 
+//end absolute encoder variable
+
+
 //vesc variable
 uint8_t  vesc_tx_buff[10];
 uint16_t vesc_bufflength;
-int32_t TMC_torque_command = 0;
+volatile int32_t TMC_torque_command = 0;
+// end vesc variable
 
-/**BEGIN>> Controller vialable <<**/
-float Current_U = 0;
-/**END>> Controller vialable <<**/
 
 
 // test variable
@@ -154,8 +185,8 @@ uint8_t isEvenParity(uint16_t data){
     // Rightmost bit of y holds the parity value
     // if (y&1) is 0 then parity is odd else even
     if(y & 1) {return 0;} else {return 1;};
-
 }
+
 void CAN_DISABLE_ALL(){
 // LOW: normal mode, HIGH: stand by mode (TJA1042)
 HAL_GPIO_WritePin(canfd2_stb_GPIO_Port, canfd2_stb_Pin, GPIO_PIN_SET);
@@ -228,20 +259,16 @@ void CAN_Init()
 
 
 void canRestartPeriPheral(){
-
   // if we have two can instance, we will need to fix this later.
-
   // deinit the canfd peripheral
   if (HAL_FDCAN_DeInit(&hfdcan2) != HAL_OK) { while(1) ;};
+  HAL_Delay(100);
   // init
   MX_FDCAN2_Init();
   // config both can instance and start both can instance
   CAN_Init();
-
   // track restart behaviour
   canRestartCounter++;
-
-
 }
 
 
@@ -342,16 +369,31 @@ int main(void)
   MX_TIM7_Init();
   MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
-  // can initialize
+
+  // CONTROLLER
+
+  // float kUNVS_wheel[3] = {0.2f, 1.0f, 1.0f};       //controller gain wheel universal controller for 1st order system ka=0.6 kr=1 kb=2(could be increased)
+  float kUNVS_kneeleft[3] = {150.0f, 0.25f, 20.0f};     // 30, 0.02 ,5  date24/11/22
+  float intLimit = 10.0f;                          //saturation value of controller integral terms
+  // float uLimit   = 25.0f;                          //saturation value of controller 
+  float uLimit   = 11.0f;                          //saturation value of controller 
+  float dZone    = 0.001f;                         //deadzone of controller
+  float dtCtrl   = 0.001f; 
+  float velLimit = 100.0f;
+  
+  // InitCtrl(&motor_wheel_L, dtCtrl, kUNVS_wheel, dZone, intLimit, uLimit, velLimit);
+  // InitCtrl(&motor_wheel_R, dtCtrl, kUNVS_wheel, dZone, intLimit, uLimit, velLimit);
+  InitCtrl(&knee_left, dtCtrl, kUNVS_kneeleft, dZone, intLimit, uLimit, velLimit);
+  // InitCtrl(&motor_bws_R, dtCtrl, kUNVS_bws, dZone, intLimit, uLimit, velLimit);
+
+  // END INITIALIZE CONTROLLER //
+
+  // CAN initialize
   CAN_Init();
   // timer for encoder
   HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL); // encoder timer
-  // timer initialize // loop 2000 hz
+  // timer initialize // loop 1000 hz
   HAL_TIM_Base_Start_IT(&htim6);
-
-  // prepare data to send
-  fb.vel = 56.0f;
-  fb.pos = 25.0f;
 
   /* USER CODE END 2 */
 
@@ -437,30 +479,42 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
-  if(htim->Instance == TIM6){ // loop 2000 hz
+  if(htim->Instance == TIM6){ // loop 1000 hz
 
-    // send data CANFD back to master
-    // txfifofreelevelBefore = HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan2);
-    // 
-    // rxfifofilllevel += HAL_FDCAN_GetRxFifoFillLevel(&hfdcan2, FDCAN_RX_FIFO0);
-    // txfifofreelevelAfter = HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan2);
+    // 1.) INITIALIZE local variable
+    // float velError, posError;
 
-    // firstTimeTxFDCAN2++;
-    //read encoder
+    // 2.) read encoder
+
+    //incremental encoder
     incENCODER.u16counter_ABI[0] = (int16_t)__HAL_TIM_GET_COUNTER(&htim3);
     incENCODER.encDelta_ABI = (incENCODER.u16counter_ABI[0] - incENCODER.u16counter_ABI[1]);
     incENCODER.u16counter_ABI[1] = incENCODER.u16counter_ABI[0];
     incENCODER.s32counter_ABI += incENCODER.direction * incENCODER.encDelta_ABI;
 
-    // absolute encoder
+    //absolute encoder
     HAL_GPIO_WritePin(CS_KneeABS_GPIO_Port, CS_KneeABS_Pin, GPIO_PIN_RESET);
     HAL_SPI_Transmit_IT(&hspi2, abs_read_addr, 2);
 
-    // sending uart
+
+    // 3.) COMPUTE control parameter (position control)
+    //3.1 knee_left
+
+    pos_feedback =  DegToRad(CntToDeg(incENCODER.s32counter_ABI));    //[rad] 
+    vel_feedback = DegToRad(CntToDeg(incENCODER.encDelta_ABI)) * 1000.0f;   //[rad/s]
+    // y=mm2rad*BWSComm_L.h_lever;
+    posError=DegToRad(userPos)-pos_feedback;
+    knee_left.err=posError;
+    //PosCtrlPID(&motor_bws_L, &u); //standard PID  // bws gain P=40 I=20 D=10
+    PosCtrl(&knee_left, &u); //  bws gain Ka=150 Kr=0.25(quite 0.2) Kb=20
+
+
+    // 4.) Sending uart to control motor using current
     //TMC_torque_command = 1000 is 1 A (current).
-    TMC_torque_command = Current_U;
+    TMC_torque_command = u * 1000;
     vesc_bufflength = VESC_UARTsetCurrent(vesc_tx_buff, TMC_torque_command);
     HAL_UART_Transmit_IT(&huart3, vesc_tx_buff, vesc_bufflength);
+
   }
 }
 
@@ -469,7 +523,7 @@ void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
   if(hspi->Instance == SPI2){
     HAL_GPIO_WritePin(CS_KneeABS_GPIO_Port, CS_KneeABS_Pin, GPIO_PIN_SET);
     HAL_GPIO_WritePin(CS_KneeABS_GPIO_Port, CS_KneeABS_Pin, GPIO_PIN_RESET);
-    HAL_SPI_Receive_IT(&hspi2, kneeAbs.RxDataBuff, 2);
+    HAL_SPI_Receive_IT(&hspi2, (uint8_t *)kneeAbs.RxDataBuff, 2);
   }
 }
 void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
@@ -479,7 +533,7 @@ void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
 
     // process the received data
     kneeAbs.errorFlag = (kneeAbs.RxDataBuff[0] >> 6) & 1U;
-    kneeAbs.kneeOutputCountTemp = (uint16_t)( kneeAbs.RxDataBuff[0] << 8 | kneeAbs.RxDataBuff[1]);
+    kneeAbs.kneeOutputCountTemp = (uint16_t)( ((uint8_t)kneeAbs.RxDataBuff[0] << 8) | ((uint8_t)kneeAbs.RxDataBuff[1]));
     kneeAbs.parity = isEvenParity(kneeAbs.kneeOutputCountTemp);
     if(!kneeAbs.errorFlag && isEvenParity(kneeAbs.kneeOutputCountTemp)){
       kneeAbs.kneeOutputCount =  kneeAbs.kneeOutputCountTemp & 0x3FFF;
