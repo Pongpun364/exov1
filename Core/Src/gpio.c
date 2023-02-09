@@ -86,7 +86,7 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Pin = CS_KneeABS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
   HAL_GPIO_Init(CS_KneeABS_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PtPin */
