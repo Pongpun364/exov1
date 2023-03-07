@@ -62,20 +62,13 @@ incENCODER = {.direction = 1};
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-//#define IS_DRIVE0
-#define IS_DRIVE1
-// #define IS_DRIVE2
-// #define IS_DRIVE3
+// left side
+// #define IS_DRIVE0 0
+#define IS_DRIVE1 1
+// right side
+// #define IS_DRIVE2 2
+// #define IS_DRIVE3 3
 
-#define DRIVE0_LEFT_ID 0
-#define DRIVE1_LEFT_ID 1
-#define DRIVE2_LEFT_ID 2
-#define DRIVE3_LEFT_ID 3
-
-#define DRIVE0_RIGHT_ID 0
-#define DRIVE1_RIGHT_ID 1
-#define DRIVE2_RIGHT_ID 2
-#define DRIVE3_RIGHT_ID 3
 
 #ifndef PI
   #define PI   3.14159265358979323846264338327950 
@@ -101,7 +94,7 @@ incENCODER = {.direction = 1};
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-DriveFeedback fb; // for now: fb[0] is DRIVE0_RIGHT_ID
+DriveFeedback fb; // for now: fb[0] is DRIVE0_ID
 
 // CURRENT DATA FROM MASTER
 float Current_U;
@@ -135,6 +128,8 @@ uint32_t errorCount;
 uint8_t txcplt;
 uint8_t rxcplt;
 uint8_t txrxcplt;
+
+float userPos;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -213,16 +208,16 @@ void CAN_Init()
   filter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
 
 #ifdef IS_DRIVE0
-  filter.FilterID1    = DRIVE0_RIGHT_ID;
+  filter.FilterID1    = IS_DRIVE0;
 #endif
 #ifdef IS_DRIVE1
-  filter.FilterID1    = DRIVE1_RIGHT_ID;
+  filter.FilterID1    = IS_DRIVE1;
 #endif
 #ifdef IS_DRIVE2
-  filter.FilterID1    = DRIVE2_RIGHT_ID;
+  filter.FilterID1    = IS_DRIVE2;
 #endif
 #ifdef IS_DRIVE3
-  filter.FilterID1    = DRIVE3_RIGHT_ID;
+  filter.FilterID1    = IS_DRIVE3;
 #endif
 
   filter.FilterID2    = 0x7FF;
@@ -271,16 +266,16 @@ void CAN2_SendIqRef(DriveFeedback *fb)
   // send feedback
 
 #ifdef IS_DRIVE0
-  header.Identifier = DRIVE0_RIGHT_ID;
+  header.Identifier = IS_DRIVE0;
 #endif
 #ifdef IS_DRIVE1
-  header.Identifier = DRIVE1_RIGHT_ID;
+  header.Identifier = IS_DRIVE1;
 #endif
 #ifdef IS_DRIVE2
-  header.Identifier = DRIVE2_RIGHT_ID;
+  header.Identifier = IS_DRIVE2;
 #endif
 #ifdef IS_DRIVE3
-  header.Identifier = DRIVE3_RIGHT_ID;
+  header.Identifier = IS_DRIVE3;
 #endif
 
   if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan2, &header, (uint8_t*)fb) != HAL_OK) { return; }
@@ -463,7 +458,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
     // update the fb parameter
     fb.pos = DegToRad(CntToDeg(incENCODER.s32counter_ABI));    //[rad] 
     fb.vel = DegToRad(CntToDeg(incENCODER.encDelta_ABI)) * 1000.0f;   //[rad/s]
-    fb.absPos = kneeAbs.kneeOutputCount * (360.0/16383.0); //offset = 6.81 deg
+    // fb.absPos = kneeAbs.kneeOutputCount * (360.0/16383.0); //offset = 6.81 deg
+    // TEST TWO CAN BUS
+    fb.absPos = userPos; //offset = 6.81 deg
 
   }
 }
