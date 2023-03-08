@@ -456,7 +456,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
     HAL_SPI_Transmit_IT(&hspi2, abs_read_addr, 2);
 
     // update the fb parameter
-    fb.pos = DegToRad(CntToDeg(incENCODER.s32counter_ABI));    //[rad] 
+    fb.pos = CntToDeg(incENCODER.s32counter_ABI);    //[degree] 
     fb.vel = DegToRad(CntToDeg(incENCODER.encDelta_ABI)) * 1000.0f;   //[rad/s]
     // fb.absPos = kneeAbs.kneeOutputCount * (360.0/16383.0); //offset = 6.81 deg
     // TEST TWO CAN BUS
