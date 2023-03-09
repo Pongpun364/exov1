@@ -27,7 +27,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "UNVScontroller_V3.h"
 #include "PVESC_UART.h"
+#include "checksum.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -56,7 +58,7 @@ struct ENCODER_Engine{
   int32_t s32counter_ABI;
   float gearRatio;
 }
-incENCODER = {.direction = 1};
+incENCODER = {.direction = -1};
 
 /* USER CODE END PTD */
 
@@ -77,9 +79,15 @@ incENCODER = {.direction = 1};
 
 #define RadToDeg(X) (X * (180.0 / PI))
 #define DegToRad(X) (X * (PI / 180.0))
+// not implement ratio
 #define CntToDeg(X) (X * (360.0/2000.0))
 #define DegToCnt(X) (X * (2000.0/360.0))
 
+// implement gear ratio
+// #define CntToDeg(X) (X * ((360.0 * 360.0)/(2000.0*35400.0)))
+// #define DegToCnt(X) (X * ((2000.0*35400.0)/(360.0 * 360.0)))
+// note
+// 360 deg output = 35400 deg input
 /* SPI commands */
 
 // #define AMT22_RESET     0x60
@@ -96,8 +104,27 @@ incENCODER = {.direction = 1};
 /* USER CODE BEGIN PV */
 DriveFeedback fb; // for now: fb[0] is DRIVE0_ID
 
-// CURRENT DATA FROM MASTER
-float Current_U;
+
+/**BEGIN>> Controller vialable <<**/
+// CONTROLLER
+CTRL_TypeDef knee_left;
+uint8_t controller_is_enable = 0;
+float pos_setpoint, pos_feedback;
+float vel_setpoint, vel_feedback;
+float cur_setpoint, cur_feedback;
+
+float pos_feedback_knee_L = 0;
+float vel_feedback_knee_L = 0;
+
+float Current_U = 0;
+
+// user input to controller
+float userPos, userVel; // Position is in degree (0-360), Velocity is in Deg/Second.
+float u; // current value for debug
+float posError;
+/**END>> Controller vialable <<**/
+
+
 // absolute encoder variable
 AEAT9922 kneeAbs;
 uint8_t abs_read_addr[2] = {0xC0, 0x3F};
@@ -129,7 +156,6 @@ uint8_t txcplt;
 uint8_t rxcplt;
 uint8_t txrxcplt;
 
-float userPos;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -341,6 +367,23 @@ int main(void)
   MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
 
+// CONTROLLER
+
+  // float kUNVS_wheel[3] = {0.2f, 1.0f, 1.0f};       //controller gain wheel universal controller for 1st order system ka=0.6 kr=1 kb=2(could be increased)
+  float kUNVS_kneeleft[3] = {5.0f, 0.15f, 0.0f};     // 5, 0.15 ,0  date09/03/23
+  float intLimit = 10.0f;                          //saturation value of controller integral terms
+  float uLimit   = 10.0f;                          //saturation value of controller 
+  float dZone    = 0.001f;                         //deadzone of controller
+  float dtCtrl   = 0.001f; 
+  float velLimit = 100.0f;
+  
+  // InitCtrl(&motor_wheel_L, dtCtrl, kUNVS_wheel, dZone, intLimit, uLimit, velLimit);
+  // InitCtrl(&motor_wheel_R, dtCtrl, kUNVS_wheel, dZone, intLimit, uLimit, velLimit);
+  InitCtrl(&knee_left, dtCtrl, kUNVS_kneeleft, dZone, intLimit, uLimit, velLimit);
+  // InitCtrl(&motor_bws_R, dtCtrl, kUNVS_bws, dZone, intLimit, uLimit, velLimit);
+
+  // END INITIALIZE CONTROLLER //
+
   // CAN initialize
   CAN_Init();
   // timer for encoder
@@ -421,17 +464,17 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
     return; 
   }
 
-  // Update feedback data
-  CAN_UpdateCommand(hfdcan, &Current_U);
+  // // Update feedback data
+  // CAN_UpdateCommand(hfdcan, &Current_U);
 
-  // 4.) Sending uart to control motor using current
-  //TMC_torque_command = 1000 is 1 A (current).
-  TMC_torque_command = Current_U * 1000;
-  vesc_bufflength = VESC_UARTsetCurrent(vesc_tx_buff, TMC_torque_command);
-  HAL_UART_Transmit_IT(&huart3, vesc_tx_buff, vesc_bufflength);
+  // // 4.) Sending uart to control motor using current
+  // //TMC_torque_command = 1000 is 1 A (current).
+  // TMC_torque_command = Current_U * 1000;
+  // vesc_bufflength = VESC_UARTsetCurrent(vesc_tx_buff, TMC_torque_command);
+  // HAL_UART_Transmit_IT(&huart3, vesc_tx_buff, vesc_bufflength);
 
-  // send command back to master
-  CAN2_SendIqRef(&fb);
+  // // send command back to master
+  // CAN2_SendIqRef(&fb);
 
 
 
@@ -457,10 +500,29 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 
     // update the fb parameter
     fb.pos = CntToDeg(incENCODER.s32counter_ABI);    //[degree] 
-    fb.vel = DegToRad(CntToDeg(incENCODER.encDelta_ABI)) * 1000.0f;   //[rad/s]
+    fb.vel = CntToDeg(incENCODER.encDelta_ABI) * 1000.0f;   //[deg/s]
     // fb.absPos = kneeAbs.kneeOutputCount * (360.0/16383.0); //offset = 6.81 deg
-    // TEST TWO CAN BUS
     fb.absPos = userPos; //offset = 6.81 deg
+  
+  
+    // 3.) COMPUTE control parameter (position control)
+    //3.1 knee_left
+
+    pos_feedback =  CntToDeg(incENCODER.s32counter_ABI);    //[deg] 
+    //vel_feedback = DegToRad(CntToDeg(incENCODER.encDelta_ABI)) * 1000.0f;   //[deg/s]
+    // y=mm2rad*BWSComm_L.h_lever;
+    posError=userPos - pos_feedback;
+    knee_left.err=posError;
+    // PosCtrlPID(&motor_bws_L, &u); //standard PID  // bws gain P=40 I=20 D=10
+    PosCtrl(&knee_left, &u); //  bws gain Ka=150 Kr=0.25(quite 0.2) Kb=20
+
+
+    // 4.) Sending uart to control motor using current
+    //TMC_torque_command = 1000 is 1 A (current).
+    TMC_torque_command = u * 1000;
+    vesc_bufflength = VESC_UARTsetCurrent(vesc_tx_buff, TMC_torque_command);
+    HAL_UART_Transmit_IT(&huart3, vesc_tx_buff, vesc_bufflength);
+
 
   }
 }
