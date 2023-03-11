@@ -80,12 +80,12 @@ incENCODER = {.direction = -1};
 #define RadToDeg(X) (X * (180.0 / PI))
 #define DegToRad(X) (X * (PI / 180.0))
 // not implement ratio
-#define CntToDeg(X) (X * (360.0/2000.0))
-#define DegToCnt(X) (X * (2000.0/360.0))
+//#define CntToDeg(X) (X * (360.0/2000.0))
+//#define DegToCnt(X) (X * (2000.0/360.0))
 
 // implement gear ratio
-// #define CntToDeg(X) (X * ((360.0 * 360.0)/(2000.0*35400.0)))
-// #define DegToCnt(X) (X * ((2000.0*35400.0)/(360.0 * 360.0)))
+ #define CntToDeg(X) (X * ((360.0 * 360.0)/(2000.0*35400.0)))
+ #define DegToCnt(X) (X * ((2000.0*35400.0)/(360.0 * 360.0)))
 // note
 // 360 deg output = 35400 deg input
 /* SPI commands */
@@ -122,6 +122,11 @@ float Current_U = 0;
 float userPos, userVel; // Position is in degree (0-360), Velocity is in Deg/Second.
 float u; // current value for debug
 float posError;
+// sine parameter
+uint16_t t_max = 1000;
+uint32_t t_run, lastTick;
+int32_t debug_pos = 0;
+
 /**END>> Controller vialable <<**/
 
 
@@ -372,7 +377,7 @@ int main(void)
   // float kUNVS_wheel[3] = {0.2f, 1.0f, 1.0f};       //controller gain wheel universal controller for 1st order system ka=0.6 kr=1 kb=2(could be increased)
   float kUNVS_kneeleft[3] = {5.0f, 0.15f, 0.0f};     // 5, 0.15 ,0  date09/03/23
   float intLimit = 10.0f;                          //saturation value of controller integral terms
-  float uLimit   = 10.0f;                          //saturation value of controller 
+  float uLimit   = 15.0f;                          //saturation value of controller 
   float dZone    = 0.001f;                         //deadzone of controller
   float dtCtrl   = 0.001f; 
   float velLimit = 100.0f;
@@ -397,6 +402,13 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    // sine wave position 1000 hz
+    // if(uwTick - lastTick >= 1){
+    //   lastTick = uwTick;
+    //   // tmax = 1000 -> 1 sec to finish sine loop
+    //   userPos = 2000.0f * sin(2.0f * PI * (t_run++ % t_max) / (t_max - 1));
+    //   debug_pos = userPos;
+    // }
     
     /* USER CODE END WHILE */
 
@@ -494,17 +506,17 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
     incENCODER.u16counter_ABI[1] = incENCODER.u16counter_ABI[0];
     incENCODER.s32counter_ABI += incENCODER.direction * incENCODER.encDelta_ABI;
 
-    //absolute encoder
-    HAL_GPIO_WritePin(CS_KneeABS_GPIO_Port, CS_KneeABS_Pin, GPIO_PIN_RESET);
-    HAL_SPI_Transmit_IT(&hspi2, abs_read_addr, 2);
+    // //absolute encoder
+    // HAL_GPIO_WritePin(CS_KneeABS_GPIO_Port, CS_KneeABS_Pin, GPIO_PIN_RESET);
+    // HAL_SPI_Transmit_IT(&hspi2, abs_read_addr, 2);
 
-    // update the fb parameter
-    fb.pos = CntToDeg(incENCODER.s32counter_ABI);    //[degree] 
-    fb.vel = CntToDeg(incENCODER.encDelta_ABI) * 1000.0f;   //[deg/s]
-    // fb.absPos = kneeAbs.kneeOutputCount * (360.0/16383.0); //offset = 6.81 deg
-    fb.absPos = userPos; //offset = 6.81 deg
-  
-  
+    // // update the fb parameter
+    // fb.pos = CntToDeg(incENCODER.s32counter_ABI);    //[degree] 
+    // fb.vel = CntToDeg(incENCODER.encDelta_ABI) * 1000.0f;   //[deg/s]
+    // // fb.absPos = kneeAbs.kneeOutputCount * (360.0/16383.0); //offset = 6.81 deg
+    // fb.absPos = userPos; //offset = 6.81 deg
+
+
     // 3.) COMPUTE control parameter (position control)
     //3.1 knee_left
 
