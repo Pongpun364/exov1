@@ -58,7 +58,7 @@ struct ENCODER_Engine{
   int32_t s32counter_ABI;
   float gearRatio;
 }
-incENCODER = {.direction = -1};
+incENCODER = {.direction = 1};
 
 /* USER CODE END PTD */
 
@@ -83,11 +83,16 @@ incENCODER = {.direction = -1};
 //#define CntToDeg(X) (X * (360.0/2000.0))
 //#define DegToCnt(X) (X * (2000.0/360.0))
 
-// implement gear ratio
- #define CntToDeg(X) (X * ((360.0 * 360.0)/(2000.0*35400.0)))
- #define DegToCnt(X) (X * ((2000.0*35400.0)/(360.0 * 360.0)))
+// implement gear ratio (aps 5055s)
+//  #define CntToDeg(X) (X * ((360.0 * 360.0)/(2000.0*35400.0)))
+//  #define DegToCnt(X) (X * ((2000.0*35400.0)/(360.0 * 360.0)))
 // note
 // 360 deg output = 35400 deg input
+
+// implement gear ratio (flipsky 6354 motor)
+ #define CntToDeg(X) (X * ((360.0 * 3.0)/(2000.0*284.0)))
+ #define DegToCnt(X) (X * ((2000.0*284.0)/(360.0 * 3.0)))
+
 /* SPI commands */
 
 // #define AMT22_RESET     0x60
@@ -377,7 +382,7 @@ int main(void)
   // float kUNVS_wheel[3] = {0.2f, 1.0f, 1.0f};       //controller gain wheel universal controller for 1st order system ka=0.6 kr=1 kb=2(could be increased)
   float kUNVS_kneeleft[3] = {5.0f, 0.15f, 0.0f};     // 5, 0.15 ,0  date09/03/23
   float intLimit = 10.0f;                          //saturation value of controller integral terms
-  float uLimit   = 15.0f;                          //saturation value of controller 
+  float uLimit   = 10.0f;                          //saturation value of controller 
   float dZone    = 0.001f;                         //deadzone of controller
   float dtCtrl   = 0.001f; 
   float velLimit = 100.0f;
@@ -531,7 +536,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 
     // 4.) Sending uart to control motor using current
     //TMC_torque_command = 1000 is 1 A (current).
-    TMC_torque_command = u * 1000;
+    TMC_torque_command = u * 1000 ;
     vesc_bufflength = VESC_UARTsetCurrent(vesc_tx_buff, TMC_torque_command);
     HAL_UART_Transmit_IT(&huart3, vesc_tx_buff, vesc_bufflength);
 
