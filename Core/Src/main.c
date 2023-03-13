@@ -29,7 +29,6 @@
 /* USER CODE BEGIN Includes */
 #include "UNVScontroller_V3.h"
 #include "PVESC_UART.h"
-#include "checksum.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -90,8 +89,8 @@ incENCODER = {.direction = 1};
 // 360 deg output = 35400 deg input
 
 // implement gear ratio (flipsky 6354 motor)
- #define CntToDeg(X) (X * ((360.0 * 3.0)/(2000.0*284.0)))
- #define DegToCnt(X) (X * ((2000.0*284.0)/(360.0 * 3.0)))
+#define CntToDeg(X) (X * ((360.0 * 3.0)/(2000.0*284.0)))
+#define DegToCnt(X) (X * ((2000.0*284.0)/(360.0 * 3.0)))
 
 /* SPI commands */
 
@@ -128,10 +127,10 @@ float userPos, userVel; // Position is in degree (0-360), Velocity is in Deg/Sec
 float u; // current value for debug
 float posError;
 // sine parameter
-uint16_t t_max = 1000;
+uint16_t t_max = 2000;
 uint32_t t_run, lastTick;
-int32_t debug_pos = 0;
-
+int32_t debug_pos, debug_error;
+uint8_t driveflag;
 /**END>> Controller vialable <<**/
 
 
@@ -394,11 +393,11 @@ int main(void)
 
   // END INITIALIZE CONTROLLER //
 
-  // CAN initialize
+  // // CAN initialize
   CAN_Init();
-  // timer for encoder
+  // // timer for encoder
   HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL); // encoder timer
-  // timer initialize // loop 1000 hz
+  // // timer initialize // loop 1000 hz
   HAL_TIM_Base_Start_IT(&htim6);
 
   /* USER CODE END 2 */
@@ -408,12 +407,15 @@ int main(void)
   while (1)
   {
     // sine wave position 1000 hz
-    // if(uwTick - lastTick >= 1){
-    //   lastTick = uwTick;
-    //   // tmax = 1000 -> 1 sec to finish sine loop
-    //   userPos = 2000.0f * sin(2.0f * PI * (t_run++ % t_max) / (t_max - 1));
-    //   debug_pos = userPos;
-    // }
+     if(uwTick - lastTick >= 1){
+       lastTick = uwTick;
+       if(!driveflag){continue;}
+       // tmax = 1000 -> 1 sec to finish sine loop
+       userPos = 10.0f * sin(2.0f * PI * (t_run++ % t_max) / (t_max - 1));
+       debug_pos = userPos * 100;
+     }
+
+    
     
     /* USER CODE END WHILE */
 
@@ -502,7 +504,6 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
   if(htim->Instance == TIM6){ // loop 1000 hz
-
     // 1.) read encoder
 
     //incremental encoder
@@ -530,6 +531,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
     // y=mm2rad*BWSComm_L.h_lever;
     posError=userPos - pos_feedback;
     knee_left.err=posError;
+    debug_error = posError * 100;
     // PosCtrlPID(&motor_bws_L, &u); //standard PID  // bws gain P=40 I=20 D=10
     PosCtrl(&knee_left, &u); //  bws gain Ka=150 Kr=0.25(quite 0.2) Kb=20
 
